@@ -88,7 +88,7 @@ def test(conf, _model):
 
         # write evaluation result
         attr_f1, attr_class_f1 = eva.attr_evaluate(all_attr_pred, dg.testa_labels, dg.attribute_dic)
-        testa_result_file_path = conf["save_path"] + "test_result"
+        testa_result_file_path = conf["save_path"] + "test_result.json"
         result = {'attr F1 score': attr_f1}
         result.update(attr_class_f1)
         with open(testa_result_file_path, 'w') as f:

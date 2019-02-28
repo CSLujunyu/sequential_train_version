@@ -142,6 +142,15 @@ def sent_sru(config, review_embed, sent_mask, is_training=False):
     def get_rnn_cell():
         return tf.contrib.rnn.SRUCell(config['rnn_dim'] / 2)
 
+
+    with tf.variable_scope('non_linear',reuse=tf.AUTO_REUSE):
+        W = tf.get_variable(
+            name='non_linear_W',
+            shape=[config['attribute_num'], review_embed.shape[-1], review_embed.shape[-1]],
+            dtype=tf.float32,
+            initializer=tf.orthogonal_initializer
+        )
+
     # sent_emb:(batch*rev,sent,emb)
     sent_emb = tf.reshape(review_embed, shape=[-1, review_embed.shape[-2], review_embed.shape[-1]])
     # sent_emb:(batch*rev,)
@@ -157,23 +166,15 @@ def sent_sru(config, review_embed, sent_mask, is_training=False):
         inputs=sent_emb,
         sequence_length=sent_len,
         dtype=tf.float32)
-    # outputs:(batch, rev_len, sent_len, emb_dim)
+    # outputs:(batch*rev, sent, emb_dim)
     outputs = tf.concat(outputs, axis=-1)
-    outputs = tf.concat([tf.reduce_mean(outputs, axis=1), tf.reduce_max(outputs, axis=1)], axis=-1)
 
-    outputs = tf.layers.dense(
-        outputs,
-        units=config['emb_dim'],
-        activation=tf.nn.relu,
-        kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
-                                                                          uniform=True),
-        bias_initializer=tf.zeros_initializer,
-        name='dense',
-        reuse=tf.AUTO_REUSE
-    )
+    # outputs:(batch, rev, sent, emb_dim)
+    outputs = tf.reshape(outputs, shape=[-1, config['max_rev_len'], outputs.shape[-2], outputs.shape[-1]])
 
-    # outputs:(batch, rev_len, emb_dim)
-    outputs = tf.reshape(outputs, shape=[-1, config['max_rev_len'], outputs.shape[-1]])
+    outputs = tf.einsum('aik,brsk->barsi', W, outputs)
+    outputs = tf.nn.relu(outputs)
+    outputs = tf.reduce_max(outputs, axis=-2)
 
     return outputs
 
@@ -343,7 +344,7 @@ def doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 + 1):
     """
 
     :param config: 
-    :param rev: (batch, rev, emb)
+    :param rev: (batch, attr, rev, emb)
     :param rev_len: (batch)
     :param mask_value: 
     :return: 
@@ -353,19 +354,18 @@ def doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 + 1):
     with tf.variable_scope('context', reuse=tf.AUTO_REUSE):
         attr_context = tf.get_variable(
             name='attr_context',
-            shape=[config['attribute_num'], config['emb_dim']],
+            shape=[config['attribute_num'], rev.shape[-1]],
             dtype=tf.float32,
             initializer=tf.orthogonal_initializer
         )
 
-
     # att.shape = (batch, attr, rev)
-    att = tf.einsum('ak,bik->bai', attr_context, rev)
+    att = tf.einsum('ak,baik->bai', attr_context, rev)
     # rev_mask.shape = (batch, 1, rev)
     rev_mask = tf.expand_dims(tf.sequence_mask(rev_len, maxlen=rev.shape[-2], dtype=tf.float32), axis=1)
     att = tf.nn.softmax(att * rev_mask + mask_value * (1 - rev_mask), axis=-1)
     # sent_att: list of (batch, attr, emb)
-    rev_att = tf.einsum('bai,bik->bak', att, rev)
+    rev_att = tf.einsum('bai,baik->bak', att, rev)
 
     if config['batch_normalization']:
         rev_att = tf.layers.batch_normalization(rev_att, training=is_training)
