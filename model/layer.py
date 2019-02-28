@@ -137,45 +137,43 @@ def sent_lstm(config, review_embed, sent_mask, name):
 
     return outputs
 
-def sent_sru(config, review_embed, sent_mask, name, is_training=False):
+def sent_sru(config, review_embed, sent_mask, is_training=False):
+
+    def get_rnn_cell():
+        return tf.contrib.rnn.SRUCell(config['rnn_dim'] / 2)
 
     # sent_emb:(batch*rev,sent,emb)
-    sent_emb = tf.reshape(review_embed, shape=[-1, config['max_sent_len'], config['emb_dim']])
+    sent_emb = tf.reshape(review_embed, shape=[-1, review_embed.shape[-2], review_embed.shape[-1]])
     # sent_emb:(batch*rev,)
-    sent_len = tf.reshape(sent_mask, shape=[-1, ])
+    sent_len = tf.reshape(sent_mask, shape=[-1,])
 
-    with tf.variable_scope(name+'_sent', reuse=tf.AUTO_REUSE):
-        # define parameters
-        fw_cell = tf.contrib.rnn.SRUCell(
-            config['rnn_dim'] / 2
-        )
-        bw_cell = tf.contrib.rnn.SRUCell(
-            config['rnn_dim'] / 2
-        )
+    # define parameters
+    fw_cell = tf.nn.rnn_cell.MultiRNNCell([get_rnn_cell() for _ in range(config['rnn_layers'])])
+    bw_cell = tf.nn.rnn_cell.MultiRNNCell([get_rnn_cell() for _ in range(config['rnn_layers'])])
 
-        outputs, _ = tf.nn.bidirectional_dynamic_rnn(
-            cell_fw=fw_cell,
-            cell_bw=bw_cell,
-            inputs=sent_emb,
-            sequence_length=sent_len,
-            dtype=tf.float32)
+    outputs, _ = tf.nn.bidirectional_dynamic_rnn(
+        cell_fw=fw_cell,
+        cell_bw=bw_cell,
+        inputs=sent_emb,
+        sequence_length=sent_len,
+        dtype=tf.float32)
+    # outputs:(batch, rev_len, sent_len, emb_dim)
+    outputs = tf.concat(outputs, axis=-1)
+    outputs = tf.concat([tf.reduce_mean(outputs, axis=1), tf.reduce_max(outputs, axis=1)], axis=-1)
 
-        outputs = tf.concat(outputs, axis=-1)
-        outputs = tf.concat([tf.reduce_mean(outputs, axis=1), tf.reduce_max(outputs, axis=1)], axis=-1)
+    outputs = tf.layers.dense(
+        outputs,
+        units=config['emb_dim'],
+        activation=tf.nn.relu,
+        kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
+                                                                          uniform=True),
+        bias_initializer=tf.zeros_initializer,
+        name='dense',
+        reuse=tf.AUTO_REUSE
+    )
 
-        outputs = tf.layers.dense(
-            outputs,
-            units=config['emb_dim'],
-            activation=tf.nn.relu,
-            kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
-                                                                              uniform=True),
-            bias_initializer=tf.zeros_initializer,
-            name='dense',
-            reuse=tf.AUTO_REUSE
-        )
-
-        # outputs:(batch, rev_len, emb_dim)
-        outputs = tf.reshape(outputs, shape=[-1, config['max_rev_len'], config['emb_dim']])
+    # outputs:(batch, rev_len, emb_dim)
+    outputs = tf.reshape(outputs, shape=[-1, config['max_rev_len'], outputs.shape[-1]])
 
     return outputs
 
@@ -256,23 +254,11 @@ def stack_sent_attention(config, sent_emb, sent_len, is_training=False, mask_val
             # sent_att: list of (batch*rev, attr, emb)
             sent_att.append(tf.reduce_max(tf.einsum('baij,bjk->baik',att,sent_emb),axis=-2))
 
-    # sent_att:(batch*rev, attr, emb*layers)
-    sent_att = tf.concat(sent_att, axis=-1)
+    # sent_att:(batch*rev, attr, emb)
+    sent_att = tf.reduce_sum(tf.stack(sent_att, axis=-1), axis=-1)
     if config['batch_normalization']:
         sent_att = tf.layers.batch_normalization(sent_att, training=is_training)
-    # sent_att:(batch*rev, attr, emb)
-    sent_att = tf.layers.dense(
-        sent_att,
-        units=config['emb_dim'],
-        activation=tf.nn.relu,
-        kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
-                                                                          uniform=True),
-        bias_initializer=tf.zeros_initializer,
-        name='sent_att_dense',
-        reuse=tf.AUTO_REUSE
-    )
-    if config['drop_out']:
-        sent_att = tf.layers.dropout(sent_att, training=is_training)
+
     # sent_att:(batch, attr, rev, emb)
     sent_att = tf.transpose(tf.reshape(sent_att, [-1,config['max_rev_len'],sent_att.shape[-2],sent_att.shape[-1]]), perm=[0,2,1,3])
 
@@ -296,7 +282,6 @@ def stack_doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 +
             dtype=tf.float32,
             initializer=tf.orthogonal_initializer
         )
-    attr_context_mean = tf.reduce_mean(attr_context, axis=-2)
 
     # rev:(batch*attr, rev, emb)
     rev = tf.reshape(rev, shape=[-1, rev.shape[-2], rev.shape[-1]])
@@ -326,13 +311,13 @@ def stack_doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 +
             # rev:(batch, attr, rev, emb_dim)
             rev_reshape = tf.reshape(rev, shape=[-1, config['attribute_num'], rev.shape[-2], rev.shape[-1]])
 
-            # att.shape = (batch, attr, rev)
-            att = tf.einsum('ak,baik->bai', attr_context_mean, rev_reshape)
-            # rev_mask.shape = (batch, 1, rev)
-            rev_mask = tf.expand_dims(tf.sequence_mask(rev_len, maxlen=rev.shape[-2], dtype=tf.float32),axis=1)
+            # att.shape = (batch, attr, attr_type, rev)
+            att = tf.einsum('aik,bajk->baij', attr_context, rev_reshape)
+            # rev_mask.shape = (batch, 1, 1, rev)
+            rev_mask = tf.expand_dims(tf.expand_dims(tf.sequence_mask(rev_len, maxlen=rev.shape[-2], dtype=tf.float32),axis=1), axis=1)
             att = tf.nn.softmax(att * rev_mask + mask_value * (1 - rev_mask), axis=-1)
             # sent_att: list of (batch, attr, emb)
-            rev_att.append(tf.einsum('bai,baik->bak', att, rev_reshape))
+            rev_att.append(tf.reduce_max(tf.einsum('baij,bajk->baik', att, rev_reshape), axis=-2))
 
     # rev_att:(batch, attr, emb*layers)
     rev_att = tf.concat(rev_att, axis=-1)
@@ -353,9 +338,43 @@ def stack_doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 +
 
     return rev_att, att
 
+
+def doc_attention(config, rev, rev_len, is_training, mask_value=-2 ** 32 + 1):
+    """
+
+    :param config: 
+    :param rev: (batch, rev, emb)
+    :param rev_len: (batch)
+    :param mask_value: 
+    :return: 
+    """
+
+    ### init sent_attr_context
+    with tf.variable_scope('context', reuse=tf.AUTO_REUSE):
+        attr_context = tf.get_variable(
+            name='attr_context',
+            shape=[config['attribute_num'], config['emb_dim']],
+            dtype=tf.float32,
+            initializer=tf.orthogonal_initializer
+        )
+
+
+    # att.shape = (batch, attr, rev)
+    att = tf.einsum('ak,bik->bai', attr_context, rev)
+    # rev_mask.shape = (batch, 1, rev)
+    rev_mask = tf.expand_dims(tf.sequence_mask(rev_len, maxlen=rev.shape[-2], dtype=tf.float32), axis=1)
+    att = tf.nn.softmax(att * rev_mask + mask_value * (1 - rev_mask), axis=-1)
+    # sent_att: list of (batch, attr, emb)
+    rev_att = tf.einsum('bai,bik->bak', att, rev)
+
+    if config['batch_normalization']:
+        rev_att = tf.layers.batch_normalization(rev_att, training=is_training)
+
+    return rev_att, att
+
 def not_mention_rep(config, attr_doc_emb, attr_sent_emb, is_training=False):
 
-    attr_sent_emb = tf.reduce_mean(attr_sent_emb, axis=-2)
+    # attr_sent_emb = tf.reduce_mean(attr_sent_emb, axis=-2)
     rep = tf.layers.dense(
         tf.concat([attr_doc_emb - attr_sent_emb, attr_doc_emb * attr_sent_emb], axis=-1),
         units=config['emb_dim'],
@@ -406,26 +425,22 @@ def not_mention_rep(config, attr_doc_emb, attr_sent_emb, is_training=False):
 
 def predict_attr(config, attr_doc_emb, not_mention_emb, is_training=False):
 
-    attr_doc_emb = tf.layers.dense(
-        inputs=attr_doc_emb,
-        units=attr_doc_emb.shape[-1]//2,
-        kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
-                                                                          uniform=True),
-        bias_initializer=tf.zeros_initializer,
-        activation=tf.nn.relu,
-        name='pred_attr_1',
-        reuse=tf.AUTO_REUSE
-    )
+    attr_score = []
 
-    attr_score = tf.layers.dense(
-        inputs=attr_doc_emb,
-        units=1,
-        kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
-                                                                          uniform=True),
-        use_bias=False,
-        name='pred_attr_2',
-        reuse=tf.AUTO_REUSE
-    )
+    for i in range(config['attribute_num']):
+
+        attr_pred_score = tf.layers.dense(
+            inputs=attr_doc_emb[:,i],
+            units=1,
+            kernel_initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG',
+                                                                              uniform=True),
+            bias_initializer=tf.zeros_initializer,
+            name='pred_attr_'+str(i),
+            reuse=tf.AUTO_REUSE
+        )
+        attr_score.append(attr_pred_score)
+
+    attr_score = tf.stack(attr_score, axis=1)
 
     not_mention_emb = tf.layers.dense(
         not_mention_emb,

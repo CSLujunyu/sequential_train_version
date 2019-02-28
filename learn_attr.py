@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 from model.attr_net import Attr_Net
 import bin.attr_train as attr_train
@@ -38,7 +38,7 @@ conf = {
 
     "rnn_layers":3,
     "sent_attention_layers":2,
-    "doc_attention_layers":2,
+    "doc_attention_layers":1,
     "rnn_dim":300,
 
     "drop_out":False,
@@ -46,7 +46,7 @@ conf = {
 
     'Model': 'D_HAN_MC'
 }
-conf.update({'save_path' : os.path.join(model_path, conf['Model'] + '/attr5/')})
+conf.update({'save_path' : os.path.join(model_path, conf['Model'] + '/attr6/')})
 conf.update({'emb_dim' : conf['domain_emb_dim'] + conf['tencent_emb_dim']})
 
 if __name__ == '__main__':

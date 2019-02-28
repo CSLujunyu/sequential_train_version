@@ -87,7 +87,7 @@ def test(conf, _model):
         # cm = op.attr_confusion_matrix(all_attr_pred, dg.dev_attr_label, dg)
 
         # write evaluation result
-        attr_f1, attr_class_f1 = eva.attr_evaluate(all_attr_pred, dg.dev_labels, dg.attribute_dic)
+        attr_f1, attr_class_f1 = eva.attr_evaluate(all_attr_pred, dg.testa_labels, dg.attribute_dic)
         testa_result_file_path = conf["save_path"] + "test_result"
         result = {'attr F1 score': attr_f1}
         result.update(attr_class_f1)

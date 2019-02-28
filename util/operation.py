@@ -394,8 +394,12 @@ def doc_att_visualization(config, doc_att, rev, label, pred, dg, batch_id):
     :param dg: 
     :return: 
     """
+
+    label_index = ['Not mention', 'Mention']
     ind = np.random.randint(0, config['batch_size'])
     rev, label, doc_att, pred = rev[ind], label[ind], doc_att[ind], pred[ind]
+
+    attr_label = np.where(pred==0, np.zeros_like(label), np.ones_like(label))
 
     sample = {
         'example-id': str(batch_id * config['batch_size'] +ind),
@@ -406,18 +410,21 @@ def doc_att_visualization(config, doc_att, rev, label, pred, dg, batch_id):
         if display_id[i] == 0:
             continue
         max_att_ind = np.argmax(doc_att[i], axis=-1)
-        if pred[i] == 0:
-            rev_word = ''
-        else:
-            rev_word = id2w(rev[max_att_ind], config['<PAD>'], dg.vocab)
+        # if pred[i] == 0:
+        #     rev_word = ''
+        # else:
+        #     rev_word = id2w(rev[max_att_ind], config['<PAD>'], dg.vocab)
+        rev_word = id2w(rev[max_att_ind], config['<PAD>'], dg.vocab)
+
         # print(attr + '\t' +
         #       'label:' + str(label[i]) + '\t' +
         #       'pred:' + str(pred[i]) + '\t' +
         #       'att:' + str(doc_att[i][max_att_ind]) + '\t' +
         #       ' '.join(list(rev_word)))
+
         attr_content = {
-            'label':str(label[i]),
-            'pred':str(pred[i]),
+            'label':label_index[int(attr_label[i])],
+            'pred':label_index[int(pred[i])],
             'max att':str(doc_att[i][max_att_ind]),
             'key sentence':' '.join(list(rev_word))
         }
@@ -516,7 +523,6 @@ def senti_confusion_matrix(pred, label, dg, save_path):
 
 def attr_context_cos_similarity(attr_c, dg, save_path):
 
-    attr_c = np.mean(attr_c, axis=1)
     dot_p = np.einsum('ak,bk->ab',attr_c,attr_c)
 
     norm = np.sqrt(np.sum(attr_c * attr_c, axis=-1))

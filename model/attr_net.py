@@ -32,16 +32,17 @@ class Attr_Net(object):
             # sent_mask:(batch, rev)
             self.rev_len, self.sent_len = op.generate_mask(self.config, self.review)
 
-            # sent_emb:(batch, rev, sent, emb)
-            sent_emb = layers.stack_sent_sru(self.config, self.review_embed, self.sent_len)
+            # sent_emb:(batch, rev, emb)
+            sent_emb = layers.sent_sru(self.config, self.review_embed, self.sent_len)
             # attr_sent_emb:(batch, attr, rev, emb)
-            attr_sent_emb = layers.stack_sent_attention(self.config, sent_emb, self.sent_len, is_training=self.is_training)
+            # attr_sent_emb = layers.stack_sent_attention(self.config, sent_emb, self.sent_len, is_training=self.is_training)
 
             # score:(batch, attr, 2)
             # doc_att:(batch, attr, rev_len)
-            attr_doc_emb, self.doc_att = layers.stack_doc_attention(self.config, attr_sent_emb, self.rev_len, is_training=self.is_training)
+            attr_doc_emb, self.doc_att = layers.doc_attention(self.config, sent_emb, self.rev_len, is_training=self.is_training)
             # not_mention_emb:(batch, attr, emb)
-            not_mention_emb = layers.not_mention_rep(self.config, attr_doc_emb, attr_sent_emb)
+            attr_aver_emb = tf.tile(tf.expand_dims(tf.reduce_mean(sent_emb, axis=-2), axis=-2), multiples=[1,self.config['attribute_num'],1])
+            not_mention_emb = layers.not_mention_rep(self.config, attr_doc_emb, attr_aver_emb)
 
             # score:(batch, attr, 2)
             self.score = layers.predict_attr(self.config, attr_doc_emb, not_mention_emb, is_training=self.is_training)

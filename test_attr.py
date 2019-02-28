@@ -17,7 +17,7 @@ conf = {
     'fasttext_emb_path': os.path.join(model_data_path, 'fasttext_emb4data.pkl'),
     'tencent_emb_path': os.path.join(model_data_path, 'tencent_emb4data.pkl'),
 
-    "attr_init_model": '/hdd/lujunyu/model/meituan/D_HAN_MC/attr5/', #should be set for test
+    "attr_init_model": '/hdd/lujunyu/model/meituan/D_HAN_MC/attr6/', #should be set for test
 
     "rand_seed": None,
     "learning_rate":3e-4,
@@ -46,7 +46,7 @@ conf = {
 
     'Model': 'D_HAN_MC'
 }
-conf.update({'save_path' : os.path.join(model_path, conf['Model'] + '/attr5/')})
+conf.update({'save_path' : os.path.join(model_path, conf['Model'] + '/attr6/')})
 conf.update({'emb_dim' : conf['domain_emb_dim'] + conf['tencent_emb_dim']})
 
 
